@@ -50,6 +50,7 @@ import (
 	"github.com/hyperledger/fabric/consensus/helper"
 	"github.com/hyperledger/fabric/core"
 	"github.com/hyperledger/fabric/core/chaincode"
+	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/crypto"
 	"github.com/hyperledger/fabric/core/ledger/genesis"
 	"github.com/hyperledger/fabric/core/peer"
@@ -155,9 +156,10 @@ var networkLoginCmd = &cobra.Command{
 // }
 
 var networkListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Lists all network peers.",
-	Long:  `Returns a list of all existing network connections for the target peer node, includes both validating and non-validating peers.`,
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "Lists all network peers.",
+	Long:    `Returns a list of all existing network connections for the target peer node, includes both validating and non-validating peers.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return networkList()
 	},
@@ -170,14 +172,15 @@ var (
 
 // Chaincode-related variables.
 var (
-	chaincodeLang     string
-	chaincodeCtorJSON string
-	chaincodePath     string
-	chaincodeName     string
-	chaincodeDevMode  bool
-	chaincodeUsr      string
-	chaincodeQueryRaw bool
-	chaincodeQueryHex bool
+	chaincodeLang           string
+	chaincodeCtorJSON       string
+	chaincodePath           string
+	chaincodeName           string
+	chaincodeDevMode        bool
+	chaincodeUsr            string
+	chaincodeQueryRaw       bool
+	chaincodeQueryHex       bool
+	chaincodeAttributesJSON string
 )
 
 var chaincodeCmd = &cobra.Command{
@@ -239,7 +242,6 @@ func main() {
 	flags.Bool("peer-tls-enabled", false, "Connection uses TLS if true, else plain TCP")
 	flags.String("peer-tls-cert-file", "testdata/server1.pem", "TLS cert file")
 	flags.String("peer-tls-key-file", "testdata/server1.key", "TLS key file")
-	flags.Int("peer-port", 30303, "Port this peer listens to for incoming connections")
 	flags.Int("peer-gomaxprocs", 2, "The maximum number threads excuting peer code")
 	flags.Bool("peer-discovery-enabled", true, "Whether peer discovery is enabled")
 
@@ -248,7 +250,6 @@ func main() {
 	viper.BindPFlag("peer_tls_enabled", flags.Lookup("peer-tls-enabled"))
 	viper.BindPFlag("peer_tls_cert_file", flags.Lookup("peer-tls-cert-file"))
 	viper.BindPFlag("peer_tls_key_file", flags.Lookup("peer-tls-key-file"))
-	viper.BindPFlag("peer_port", flags.Lookup("peer-port"))
 	viper.BindPFlag("peer_gomaxprocs", flags.Lookup("peer-gomaxprocs"))
 	viper.BindPFlag("peer_discovery_enabled", flags.Lookup("peer-discovery-enabled"))
 
@@ -289,6 +290,7 @@ func main() {
 
 	chaincodeCmd.PersistentFlags().StringVarP(&chaincodeLang, "lang", "l", "golang", fmt.Sprintf("Language the %s is written in", chainFuncName))
 	chaincodeCmd.PersistentFlags().StringVarP(&chaincodeCtorJSON, "ctor", "c", "{}", fmt.Sprintf("Constructor message for the %s in JSON format", chainFuncName))
+	chaincodeCmd.PersistentFlags().StringVarP(&chaincodeAttributesJSON, "attributes", "a", "[]", fmt.Sprintf("User attributes for the %s in JSON format", chainFuncName))
 	chaincodeCmd.PersistentFlags().StringVarP(&chaincodePath, "path", "p", undefinedParamValue, fmt.Sprintf("Path to %s", chainFuncName))
 	chaincodeCmd.PersistentFlags().StringVarP(&chaincodeName, "name", "n", undefinedParamValue, fmt.Sprintf("Name of the chaincode returned by the deploy transaction"))
 	chaincodeCmd.PersistentFlags().StringVarP(&chaincodeUsr, "username", "u", undefinedParamValue, fmt.Sprintf("Username for chaincode operations when security is enabled"))
@@ -306,7 +308,7 @@ func main() {
 
 	// Init the crypto layer
 	if err := crypto.Init(); err != nil {
-		panic(fmt.Errorf("Failed initializing the crypto layer: %s", err))
+		panic(fmt.Errorf("Failed to initialize the crypto layer: %s", err))
 	}
 
 	// On failure Cobra prints the usage message and error string, so we only
@@ -328,7 +330,7 @@ func createEventHubServer() (net.Listener, *grpc.Server, error) {
 
 		//TODO - do we need different SSL material for events ?
 		var opts []grpc.ServerOption
-		if peer.TlsEnabled() {
+		if comm.TLSEnabled() {
 			creds, err := credentials.NewServerTLSFromFile(viper.GetString("peer.tls.cert.file"), viper.GetString("peer.tls.key.file"))
 			if err != nil {
 				return nil, nil, fmt.Errorf("Failed to generate credentials %v", err)
@@ -399,6 +401,7 @@ func serve(args []string) error {
 		viper.Set("ledger.blockchain.deploy-system-chaincode", "false")
 		viper.Set("validator.validity-period.verification", "false")
 	}
+
 	if err := peer.CacheConfiguration(); err != nil {
 		return err
 	}
@@ -430,10 +433,18 @@ func serve(args []string) error {
 	}
 
 	logger.Info("Security enabled status: %t", core.SecurityEnabled())
-	logger.Info("Privacy enabled status: %t", viper.GetBool("security.privacy"))
+	if viper.GetBool("security.privacy") {
+		if core.SecurityEnabled() {
+			logger.Info("Privacy enabled status: true")
+		} else {
+			panic(errors.New("Privacy cannot be enabled as requested because security is disabled"))
+		}
+	} else {
+		logger.Info("Privacy enabled status: false")
+	}
 
 	var opts []grpc.ServerOption
-	if peer.TlsEnabled() {
+	if comm.TLSEnabled() {
 		creds, err := credentials.NewServerTLSFromFile(viper.GetString("peer.tls.cert.file"), viper.GetString("peer.tls.key.file"))
 		if err != nil {
 			grpclog.Fatalf("Failed to generate credentials %v", err)
@@ -456,6 +467,8 @@ func serve(args []string) error {
 
 	var peerServer *peer.PeerImpl
 
+	discInstance := core.NewStaticDiscovery(viper.GetString("peer.discovery.rootnode"))
+
 	//create the peerServer....
 	if peer.ValidatorEnabled() {
 		logger.Debug("Running as validating peer - making genesis block if needed")
@@ -464,10 +477,10 @@ func serve(args []string) error {
 			return makeGenesisError
 		}
 		logger.Debug("Running as validating peer - installing consensus %s", viper.GetString("peer.validator.consensus"))
-		peerServer, err = peer.NewPeerWithEngine(secHelperFunc, helper.GetEngine)
+		peerServer, err = peer.NewPeerWithEngine(secHelperFunc, helper.GetEngine, discInstance)
 	} else {
 		logger.Debug("Running as non-validating peer")
-		peerServer, err = peer.NewPeerWithHandler(secHelperFunc, peer.NewPeerHandler)
+		peerServer, err = peer.NewPeerWithHandler(secHelperFunc, peer.NewPeerHandler, discInstance)
 	}
 
 	if err != nil {
@@ -501,14 +514,11 @@ func serve(args []string) error {
 		go rest.StartOpenchainRESTServer(serverOpenchain, serverDevops)
 	}
 
-	rootNode, err := core.GetRootNode()
-	if err != nil {
-		grpclog.Fatalf("Failed to get peer.discovery.rootnode valey: %s", err)
-	}
+	rootNodes := discInstance.GetRootNodes()
 
-	logger.Info("Starting peer with id=%s, network id=%s, address=%s, discovery.rootnode=%s, validator=%v",
+	logger.Info("Starting peer with id=%s, network id=%s, address=%s, discovery.rootnode=[%v], validator=%v",
 		peerEndpoint.ID, viper.GetString("peer.networkId"),
-		peerEndpoint.Address, rootNode, peer.ValidatorEnabled())
+		peerEndpoint.Address, rootNodes, peer.ValidatorEnabled())
 
 	// Start the grpc server. Done in a goroutine so we can deploy the
 	// genesis block if needed.
@@ -537,7 +547,7 @@ func serve(args []string) error {
 			profileListenAddress := viper.GetString("peer.profile.listenAddress")
 			logger.Info(fmt.Sprintf("Starting profiling server with listenAddress = %s", profileListenAddress))
 			if profileErr := http.ListenAndServe(profileListenAddress, nil); profileErr != nil {
-				logger.Error("Error starting profiler: %s", profileErr)
+				logger.Error(fmt.Sprintf("Error starting profiler: %s", profileErr))
 			}
 		}()
 	}
@@ -756,6 +766,15 @@ func checkChaincodeCmdParams(cmd *cobra.Command) (err error) {
 		return
 	}
 
+	if chaincodeAttributesJSON != "[]" {
+		var f interface{}
+		err = json.Unmarshal([]byte(chaincodeAttributesJSON), &f)
+		if err != nil {
+			err = fmt.Errorf("Chaincode argument error: %s", err)
+			return
+		}
+	}
+
 	return
 }
 
@@ -786,9 +805,16 @@ func chaincodeDeploy(cmd *cobra.Command, args []string) (err error) {
 		err = fmt.Errorf("Chaincode argument error: %s", err)
 		return
 	}
+
+	var attributes []string
+	if err = json.Unmarshal([]byte(chaincodeAttributesJSON), &attributes); err != nil {
+		err = fmt.Errorf("Chaincode argument error: %s", err)
+		return
+	}
+
 	chaincodeLang = strings.ToUpper(chaincodeLang)
 	spec := &pb.ChaincodeSpec{Type: pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value[chaincodeLang]),
-		ChaincodeID: &pb.ChaincodeID{Path: chaincodePath, Name: chaincodeName}, CtorMsg: input}
+		ChaincodeID: &pb.ChaincodeID{Path: chaincodePath, Name: chaincodeName}, CtorMsg: input, Attributes: attributes}
 
 	// If security is enabled, add client login token
 	if core.SecurityEnabled() {
@@ -828,6 +854,13 @@ func chaincodeDeploy(cmd *cobra.Command, args []string) (err error) {
 			}
 			// Unexpected error
 			panic(fmt.Errorf("Fatal error when checking for client login token: %s\n", err))
+		}
+	} else {
+		if chaincodeUsr != undefinedParamValue {
+			logger.Warning("Username supplied but security is disabled.")
+		}
+		if viper.GetBool("security.privacy") {
+			panic(errors.New("Privacy cannot be enabled as requested because security is disabled"))
 		}
 	}
 
@@ -877,9 +910,16 @@ func chaincodeInvokeOrQuery(cmd *cobra.Command, args []string, invoke bool) (err
 		err = fmt.Errorf("Chaincode argument error: %s", err)
 		return
 	}
+
+	var attributes []string
+	if err = json.Unmarshal([]byte(chaincodeAttributesJSON), &attributes); err != nil {
+		err = fmt.Errorf("Chaincode argument error: %s", err)
+		return
+	}
+
 	chaincodeLang = strings.ToUpper(chaincodeLang)
 	spec := &pb.ChaincodeSpec{Type: pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value[chaincodeLang]),
-		ChaincodeID: &pb.ChaincodeID{Name: chaincodeName}, CtorMsg: input}
+		ChaincodeID: &pb.ChaincodeID{Name: chaincodeName}, CtorMsg: input, Attributes: attributes}
 
 	// If security is enabled, add client login token
 	if core.SecurityEnabled() {
@@ -918,6 +958,13 @@ func chaincodeInvokeOrQuery(cmd *cobra.Command, args []string, invoke bool) (err
 			}
 			// Unexpected error
 			panic(fmt.Errorf("Fatal error when checking for client login token: %s\n", err))
+		}
+	} else {
+		if chaincodeUsr != undefinedParamValue {
+			logger.Warning("Username supplied but security is disabled.")
+		}
+		if viper.GetBool("security.privacy") {
+			panic(errors.New("Privacy cannot be enabled as requested because security is disabled"))
 		}
 	}
 

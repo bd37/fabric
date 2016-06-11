@@ -214,16 +214,25 @@ func (m *TransactionBlock) GetTransactions() []*Transaction {
 // result - The return value of the transaction.
 // errorCode - An error code. 5xx will be logged as a failure in the dashboard.
 // error - An error string for logging an issue.
+// chaincodeEvent - any event emitted by a transaction
 type TransactionResult struct {
-	Uuid      string `protobuf:"bytes,1,opt,name=uuid" json:"uuid,omitempty"`
-	Result    []byte `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
-	ErrorCode uint32 `protobuf:"varint,3,opt,name=errorCode" json:"errorCode,omitempty"`
-	Error     string `protobuf:"bytes,4,opt,name=error" json:"error,omitempty"`
+	Uuid           string          `protobuf:"bytes,1,opt,name=uuid" json:"uuid,omitempty"`
+	Result         []byte          `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
+	ErrorCode      uint32          `protobuf:"varint,3,opt,name=errorCode" json:"errorCode,omitempty"`
+	Error          string          `protobuf:"bytes,4,opt,name=error" json:"error,omitempty"`
+	ChaincodeEvent *ChaincodeEvent `protobuf:"bytes,5,opt,name=chaincodeEvent" json:"chaincodeEvent,omitempty"`
 }
 
 func (m *TransactionResult) Reset()         { *m = TransactionResult{} }
 func (m *TransactionResult) String() string { return proto.CompactTextString(m) }
 func (*TransactionResult) ProtoMessage()    {}
+
+func (m *TransactionResult) GetChaincodeEvent() *ChaincodeEvent {
+	if m != nil {
+		return m.ChaincodeEvent
+	}
+	return nil
+}
 
 // Block carries The data that describes a block in the blockchain.
 // version - Version used to track any protocol changes.
@@ -439,8 +448,9 @@ func (m *BlockState) GetBlock() *Block {
 // example, if start=3 and end=5, the order of blocks will be 3, 4, 5.
 // If start=5 and end=3, the order will be 5, 4, 3.
 type SyncBlockRange struct {
-	Start uint64 `protobuf:"varint,1,opt,name=start" json:"start,omitempty"`
-	End   uint64 `protobuf:"varint,2,opt,name=end" json:"end,omitempty"`
+	CorrelationId uint64 `protobuf:"varint,1,opt,name=correlationId" json:"correlationId,omitempty"`
+	Start         uint64 `protobuf:"varint,2,opt,name=start" json:"start,omitempty"`
+	End           uint64 `protobuf:"varint,3,opt,name=end" json:"end,omitempty"`
 }
 
 func (m *SyncBlockRange) Reset()         { *m = SyncBlockRange{} }

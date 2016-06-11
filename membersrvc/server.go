@@ -22,6 +22,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/hyperledger/fabric/core/crypto"
@@ -36,9 +37,15 @@ func main() {
 	viper.SetConfigName("membersrvc")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./")
+	// Path to look for the config file based on GOPATH
+	gopath := os.Getenv("GOPATH")
+	for _, p := range filepath.SplitList(gopath) {
+		cfgpath := filepath.Join(p, "src/github.com/hyperledger/fabric/membersrvc")
+		viper.AddConfigPath(cfgpath)
+	}
 	err := viper.ReadInConfig()
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("Fatal error when reading %s config file: %s\n", "membersrvc", err))
 	}
 
 	var iotrace, ioinfo, iowarning, ioerror, iopanic io.Writer
@@ -70,12 +77,15 @@ func main() {
 
 	// Init the crypto layer
 	if err := crypto.Init(); err != nil {
-		panic(fmt.Errorf("Failed initializing the crypto layer [%s]%", err))
+		panic(fmt.Errorf("Failed initializing the crypto layer [%s]", err))
 	}
 
 	ca.LogInit(iotrace, ioinfo, iowarning, ioerror, iopanic)
 	ca.Info.Println("CA Server (" + viper.GetString("server.version") + ")")
 
+	aca := ca.NewACA() 
+	defer aca.Close()
+	
 	eca := ca.NewECA()
 	defer eca.Close()
 
@@ -97,6 +107,7 @@ func main() {
 	}
 	srv := grpc.NewServer(opts...)
 
+	aca.Start(srv)
 	eca.Start(srv)
 	tca.Start(srv)
 	tlsca.Start(srv)
